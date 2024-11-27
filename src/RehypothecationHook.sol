@@ -29,6 +29,7 @@ contract RehypothecationHook is BaseHook, ERC20 {
         uint256 amount1;
         int24 tickLower;
         int24 tickUpper;
+        int24 tickSpacing;
         PoolKey key;
     }
 
@@ -88,7 +89,7 @@ contract RehypothecationHook is BaseHook, ERC20 {
             currency0: params.currency0,
             currency1: params.currency1,
             fee: params.fee,
-            tickSpacing: 0,
+            tickSpacing: params.tickSpacing,
             hooks: IHooks(address(this))
         });
         (uint160 sqrtPriceX96, int24 currentTick, , ) = poolManager.getSlot0(
@@ -123,7 +124,22 @@ contract RehypothecationHook is BaseHook, ERC20 {
         _mint(msg.sender, liquidity);
     }
 
-    function removeLiquidity(RemoveLiquidityParams calldata params) external {}
+    function removeLiquidity(RemoveLiquidityParams calldata params) external {
+        PoolKey memory key = PoolKey({
+            currency0: params.currency0,
+            currency1: params.currency1,
+            fee: params.fee,
+            tickSpacing: params.tickSpacing,
+            hooks: IHooks(address(this))
+        });
+
+        (uint160 sqrtPriceX96, int24 currentTick, , ) = poolManager.getSlot0(
+            params.key.toId()
+        );
+        if (sqrtPriceX96 == 0) revert PoolNotInitialized();
+
+        //TODO: withdraw from aave and pool
+    }
 
     function afterSwap(
         address,
