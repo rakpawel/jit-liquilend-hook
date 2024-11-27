@@ -14,6 +14,8 @@ import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
+import {IPool} from "./interfaces/IPool.sol";
 import "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
 
 contract RehypothecationHook is BaseHook, ERC20 {
@@ -45,7 +47,7 @@ contract RehypothecationHook is BaseHook, ERC20 {
 
     error PoolNotInitialized();
 
-    address public immutable aavePool;
+    IPool public aavePool;
     uint256 public percentageDeposit;
 
     constructor(
@@ -55,7 +57,7 @@ contract RehypothecationHook is BaseHook, ERC20 {
         address _aavePool,
         uint256 _percentageDeposit
     ) BaseHook(_manager) ERC20(_name, _symbol, 18) {
-        aavePool = _aavePool;
+        aavePool = IPool(_aavePool);
         percentageDeposit = _percentageDeposit;
     }
 
@@ -73,7 +75,7 @@ contract RehypothecationHook is BaseHook, ERC20 {
                 beforeRemoveLiquidity: false,
                 afterAddLiquidity: false,
                 afterRemoveLiquidity: false,
-                beforeSwap: false,
+                beforeSwap: true,
                 afterSwap: true,
                 beforeDonate: false,
                 afterDonate: false,
@@ -120,6 +122,11 @@ contract RehypothecationHook is BaseHook, ERC20 {
             address(this),
             amount1ToAdd
         );
+
+        // Supply to Aave
+        _supplyToAave(Currency.unwrap(params.currency0), amount0ToAdd);
+        _supplyToAave(Currency.unwrap(params.currency1), amount1ToAdd);
+
         //TODO: deposit to aave and pool
         _mint(msg.sender, liquidity);
     }
@@ -141,6 +148,20 @@ contract RehypothecationHook is BaseHook, ERC20 {
         //TODO: withdraw from aave and pool
     }
 
+    function beforeSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        bytes calldata hookData
+    )
+        external
+        override
+        onlyPoolManager
+        returns (bytes4, BeforeSwapDelta, uint24)
+    {
+        return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+    }
+
     function afterSwap(
         address,
         PoolKey calldata key,
@@ -160,5 +181,13 @@ contract RehypothecationHook is BaseHook, ERC20 {
         bytes calldata hookData
     ) external override onlyPoolManager returns (bytes4, BalanceDelta) {
         return (this.afterAddLiquidity.selector, delta);
+    }
+
+    function _supplyToAave(address asset, uint256 amount) internal {
+        // Approve the Aave pool to spend the token
+        ERC20(asset).approve(address(aavePool), amount);
+
+        // Supply the asset to Aave
+        aavePool.supply(asset, amount, address(this), 0);
     }
 }
