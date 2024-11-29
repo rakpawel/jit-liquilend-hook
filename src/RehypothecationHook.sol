@@ -17,6 +17,9 @@ import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
 import {IPool} from "./interfaces/IPool.sol";
 import "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
+import {SqrtPriceMath} from "v4-core/libraries/SqrtPriceMath.sol";
+import {FullMath} from "v4-core/libraries/FullMath.sol";
+import {PoolId} from "v4-core/types/PoolId.sol";
 
 contract RehypothecationHook is BaseHook, ERC20 {
     using CurrencyLibrary for Currency;
@@ -42,6 +45,8 @@ contract RehypothecationHook is BaseHook, ERC20 {
         uint128 liquidity;
         int24 tickLower;
         int24 tickUpper;
+        uint24 fee;
+        int24 tickSpacing;
         PoolKey key;
     }
 
@@ -49,6 +54,7 @@ contract RehypothecationHook is BaseHook, ERC20 {
 
     IPool public aavePool;
     uint256 public percentageDeposit;
+    uint256 public THRESHOLD;
 
     constructor(
         IPoolManager _manager,
@@ -159,6 +165,22 @@ contract RehypothecationHook is BaseHook, ERC20 {
         onlyPoolManager
         returns (bytes4, BeforeSwapDelta, uint24)
     {
+        PoolId poolId = key.toId();
+        (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(poolId);
+        if (sqrtPriceX96 == 0) revert PoolNotInitialized();
+        uint128 poolLiquidity = poolManager.getLiquidity(poolId);
+
+        uint160 newSqrtPriceX96 = estimateNewSqrtPrice(
+            sqrtPriceX96,
+            params.amountSpecified,
+            poolLiquidity,
+            params.zeroForOne
+        );
+
+        uint256 priceImpact = calculatePriceImpact(sqrtPriceX96, sqrtPriceX96);
+        if (priceImpact > THRESHOLD) {
+            //TODO: withdraw from aave and pool
+        }
         return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
@@ -189,5 +211,65 @@ contract RehypothecationHook is BaseHook, ERC20 {
 
         // Supply the asset to Aave
         aavePool.supply(asset, amount, address(this), 0);
+    }
+
+    function estimateNewSqrtPrice(
+        uint160 sqrtPriceX96,
+        int256 amountSpecified,
+        uint128 liquidity,
+        bool zeroForOne
+    ) internal pure returns (uint160) {
+        if (amountSpecified == 0) {
+            return sqrtPriceX96;
+        }
+
+        bool isPositiveAmount = amountSpecified > 0;
+        uint256 absAmount = isPositiveAmount
+            ? uint256(amountSpecified)
+            : uint256(-amountSpecified);
+
+        // For zeroForOne:
+        //   - positive amount -> price down -> amount0 -> roundUp
+        //   - negative amount -> price up -> amount1 -> roundDown
+        // For !zeroForOne:
+        //   - positive amount -> price up -> amount1 -> roundDown
+        //   - negative amount -> price down -> amount0 -> roundUp
+        bool useAmount0 = zeroForOne == isPositiveAmount;
+
+        return
+            useAmount0
+                ? SqrtPriceMath.getNextSqrtPriceFromAmount0RoundingUp(
+                    sqrtPriceX96,
+                    liquidity,
+                    absAmount,
+                    true
+                )
+                : SqrtPriceMath.getNextSqrtPriceFromAmount1RoundingDown(
+                    sqrtPriceX96,
+                    liquidity,
+                    absAmount,
+                    true
+                );
+    }
+
+    function calculatePriceImpact(
+        uint160 currentSqrtPriceX96,
+        uint160 newSqrtPriceX96
+    ) internal pure returns (uint256) {
+        // Use absDiff from SqrtPriceMath for safer arithmetic
+        uint256 sqrtPriceDiff = SqrtPriceMath.absDiff(
+            currentSqrtPriceX96,
+            newSqrtPriceX96
+        );
+
+        // Calculate relative price change using the sqrt values directly
+        // This avoids the need to fully square the values which could cause overflow
+        // (sqrtDiff * 2 * 1e4) / currentSqrtPrice gives us basis points
+        return
+            FullMath.mulDivRoundingUp(
+                sqrtPriceDiff * 2,
+                FixedPoint96.Q96,
+                currentSqrtPriceX96
+            ) / 100; // Convert to basis points
     }
 }
