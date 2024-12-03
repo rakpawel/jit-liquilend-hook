@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {console} from "forge-std/console.sol";
 import {BaseHook} from "v4-periphery/src/base/hooks/BaseHook.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 
@@ -49,8 +50,13 @@ contract Hook is BaseHook {
     mapping(address user => uint256 shares) public token0Shares;
     mapping(address user => uint256 shares) public token1Shares;
 
-    constructor(IPoolManager _manager, address _aavePool) BaseHook(_manager) {
+    constructor(
+        IPoolManager _manager,
+        address _aavePool,
+        address _elAvs
+    ) BaseHook(_manager) {
         lendingProtocol = IPool(_aavePool);
+        EL_AVS = _elAvs;
     }
 
     function getHookPermissions()
@@ -76,6 +82,15 @@ contract Hook is BaseHook {
                 afterAddLiquidityReturnDelta: false,
                 afterRemoveLiquidityReturnDelta: false
             });
+    }
+
+    function afterInitialize(
+        address sender,
+        PoolKey calldata key,
+        uint160 sqrtPriceX96,
+        int24 tick
+    ) external override onlyPoolManager returns (bytes4) {
+        return this.afterInitialize.selector;
     }
 
     function addLiquidity(LiquidityParams calldata params) external {
@@ -134,9 +149,10 @@ contract Hook is BaseHook {
         // Burn shares from user
         // Transfer tokens to user
         if (params.amount0 > 0) {
-            uint256 amount0 = IERC20(
-                getATokenAddress(Currency.unwrap(params.key.currency0))
-            ).balanceOf(address(this));
+            address aToken0 = getATokenAddress(
+                Currency.unwrap(params.key.currency0)
+            );
+            uint256 amount0 = IERC20(aToken0).balanceOf(address(this));
             uint256 shares = (params.amount0 * totalToken0Shares) / amount0;
             token0Shares[msg.sender] -= shares;
             totalToken0Shares -= shares;
@@ -152,9 +168,10 @@ contract Hook is BaseHook {
         }
 
         if (params.amount1 > 0) {
-            uint256 amount1 = IERC20(
-                getATokenAddress(Currency.unwrap(params.key.currency1))
-            ).balanceOf(address(this));
+            address aToken1 = getATokenAddress(
+                Currency.unwrap(params.key.currency1)
+            );
+            uint256 amount1 = IERC20(aToken1).balanceOf(address(this));
             uint256 shares = (params.amount1 * totalToken1Shares) / amount1;
             token1Shares[msg.sender] -= shares;
             totalToken1Shares -= shares;
@@ -194,23 +211,25 @@ contract Hook is BaseHook {
             );
         }
         // Withdraw from lending protocol
-        uint256 amount0 = IERC20(
-            getATokenAddress(Currency.unwrap(key.currency0))
-        ).balanceOf(address(this));
+        address aToken0 = getATokenAddress(Currency.unwrap(key.currency0));
         lendingProtocol.withdraw(
             Currency.unwrap(key.currency0),
-            amount0,
+            IERC20(aToken0).balanceOf(address(this)),
             address(this)
         );
-        uint256 amount1 = IERC20(
-            getATokenAddress(Currency.unwrap(key.currency1))
-        ).balanceOf(address(this));
+        address aToken1 = getATokenAddress(Currency.unwrap(key.currency1));
         lendingProtocol.withdraw(
             Currency.unwrap(key.currency1),
-            amount1,
+            IERC20(aToken1).balanceOf(address(this)),
             address(this)
         );
 
+        uint256 amount0 = IERC20(Currency.unwrap(key.currency0)).balanceOf(
+            address(this)
+        );
+        uint256 amount1 = IERC20(Currency.unwrap(key.currency1)).balanceOf(
+            address(this)
+        );
         // Approve tokens to pool
         IERC20(Currency.unwrap(key.currency0)).approve(
             address(poolManager),
@@ -324,5 +343,13 @@ contract Hook is BaseHook {
 
     function getATokenAddress(address asset) internal view returns (address) {
         return lendingProtocol.getReserveData(asset).aTokenAddress;
+    }
+
+    function getTickLower() external view returns (int24) {
+        return tickLower;
+    }
+
+    function getTickUpper() external view returns (int24) {
+        return tickUpper;
     }
 }
