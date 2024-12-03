@@ -46,6 +46,7 @@ contract Hook is BaseHook {
     uint256 public totalToken0Shares;
     uint256 public totalToken1Shares;
     uint128 private liquidityAdded;
+    bool private liquidityInitialized;
 
     mapping(address user => uint256 shares) public token0Shares;
     mapping(address user => uint256 shares) public token1Shares;
@@ -68,7 +69,7 @@ contract Hook is BaseHook {
         return
             Hooks.Permissions({
                 beforeInitialize: false,
-                afterInitialize: true,
+                afterInitialize: false,
                 beforeAddLiquidity: true,
                 beforeRemoveLiquidity: false,
                 afterAddLiquidity: false,
@@ -82,15 +83,6 @@ contract Hook is BaseHook {
                 afterAddLiquidityReturnDelta: false,
                 afterRemoveLiquidityReturnDelta: false
             });
-    }
-
-    function afterInitialize(
-        address sender,
-        PoolKey calldata key,
-        uint160 sqrtPriceX96,
-        int24 tick
-    ) external override onlyPoolManager returns (bytes4) {
-        return this.afterInitialize.selector;
     }
 
     function addLiquidity(LiquidityParams calldata params) external {
@@ -333,12 +325,11 @@ contract Hook is BaseHook {
         address sender,
         PoolKey calldata,
         IPoolManager.ModifyLiquidityParams calldata,
-        BalanceDelta,
-        BalanceDelta delta,
         bytes calldata
-    ) external view onlyPoolManager returns (bytes4, BalanceDelta) {
-        if (sender != address(this)) revert("Add Liquidity thorugh Hook");
-        return (this.afterAddLiquidity.selector, delta);
+    ) external override onlyPoolManager returns (bytes4) {
+        if (liquidityInitialized) revert("Add Liquidity thorugh Hook");
+        liquidityInitialized = true;
+        return this.beforeAddLiquidity.selector;
     }
 
     function getATokenAddress(address asset) internal view returns (address) {
