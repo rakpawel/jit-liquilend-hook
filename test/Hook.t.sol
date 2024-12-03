@@ -197,7 +197,6 @@ contract TestHook is Test, Deployers {
             1 ether
         );
         manager.unlock(ZERO_BYTES);
-        // TODO: reverting with CurrencyNotSettled()
         assertEq(hook.getTickLower(), -60);
         assertEq(hook.getTickUpper(), 60);
     }
@@ -214,6 +213,7 @@ contract TestHook is Test, Deployers {
             params,
             abi.encode(int24(-60), int24(60))
         );
+        manager.sync(currency0);
         MockERC20(Currency.unwrap(currency0)).transfer(address(manager), 0.00001 ether);
         manager.take(currency1, address(elAvs), uint256(int256(delta.amount1())));
         manager.settle();
