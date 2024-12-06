@@ -283,9 +283,10 @@ contract TestHook is Test, Deployers {
         bytes calldata rawData
     ) external returns (bytes memory) {
         address actor = abi.decode(rawData, (address));
+        int256 swapAmount = actor == address(elAvs) ? -0.00001 ether : -1 ether;
         IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
             zeroForOne: true,
-            amountSpecified: -0.00001 ether,
+            amountSpecified: swapAmount,
             sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
         });
         vm.startPrank(actor);
@@ -294,9 +295,10 @@ contract TestHook is Test, Deployers {
             : ZERO_BYTES;
         BalanceDelta delta = manager.swap(key, params, tickParams);
         manager.sync(currency0);
+        uint256 swapAmount0 = actor == address(elAvs) ? 0.00001 ether : 1 ether;
         MockERC20(Currency.unwrap(currency0)).transfer(
             address(manager),
-            0.00001 ether
+            swapAmount0
         );
         manager.take(
             currency1,
