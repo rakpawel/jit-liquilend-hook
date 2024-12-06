@@ -28,6 +28,9 @@ This solution is built using the **Foundry framework** and allows liquidity prov
 - **EigenLayer AVS**: Provides real-time price data and calculates the ideal tick range for liquidity provision.
 - **Foundry**: Used for compiling, deploying, and testing smart contracts efficiently.
 
+![Screenshot 2024-12-03 161638](https://github.com/user-attachments/assets/080daca9-e99c-4104-9bb0-754a977b1982)
+
+
 ## Getting Started
 
 ### Prerequisites
