@@ -239,15 +239,6 @@ contract Hook is BaseHook {
         uint256 amount1 = IERC20(Currency.unwrap(key.currency1)).balanceOf(
             address(this)
         );
-        // Approve tokens to pool
-        IERC20(Currency.unwrap(key.currency0)).approve(
-            address(poolManager),
-            amount0
-        );
-        IERC20(Currency.unwrap(key.currency1)).approve(
-            address(poolManager),
-            amount1
-        );
 
         if (tickLower == 0 && tickUpper == 0) {
             tickLower = MIN_TICK;
@@ -298,6 +289,7 @@ contract Hook is BaseHook {
         bytes calldata hookData
     ) external override onlyPoolManager returns (bytes4, int128) {
         (, int24 currentTick, , ) = poolManager.getSlot0(key.toId());
+        console.log("Current Tick: %s", currentTick);
 
         if (sender == EL_AVS) {
             if (currentTick < tickLower || currentTick > tickUpper)
@@ -316,6 +308,22 @@ contract Hook is BaseHook {
             }),
             hookData
         );
+        if (delta.amount0() > 0) {
+            key.currency0.take(
+                poolManager,
+                address(this),
+                uint256(int256(delta.amount0())),
+                false
+            );
+        }
+        if (delta.amount1() > 0) {
+            key.currency1.take(
+                poolManager,
+                address(this),
+                uint256(int256(delta.amount1())),
+                false
+            );
+        }
 
         uint256 amount0 = IERC20(Currency.unwrap(key.currency0)).balanceOf(
             address(this)
@@ -346,22 +354,6 @@ contract Hook is BaseHook {
             address(this),
             0
         );
-        if (delta.amount0() > 0) {
-            key.currency0.take(
-                poolManager,
-                address(this),
-                uint256(int256(delta.amount0())),
-                false
-            );
-        }
-        if (delta.amount1() > 0) {
-            key.currency1.take(
-                poolManager,
-                address(this),
-                uint256(int256(delta.amount1())),
-                false
-            );
-        }
         return (this.afterSwap.selector, 0);
     }
 
@@ -371,7 +363,7 @@ contract Hook is BaseHook {
         IPoolManager.ModifyLiquidityParams calldata,
         bytes calldata
     ) external override onlyPoolManager returns (bytes4) {
-        if (liquidityInitialized) revert("Add Liquidity thorugh Hook");
+        require (!liquidityInitialized || sender == address(this), "Add Liquidity through Hook");
         liquidityInitialized = true;
         return this.beforeAddLiquidity.selector;
     }
