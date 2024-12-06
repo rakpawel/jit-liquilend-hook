@@ -42,6 +42,8 @@ contract Hook is BaseHook {
 
     int24 public tickLower;
     int24 public tickUpper;
+    int24 internal constant MIN_TICK = -887220;
+    int24 internal constant MAX_TICK = -MIN_TICK;
     address public EL_AVS;
     uint256 public totalToken0Shares;
     uint256 public totalToken1Shares;
@@ -97,7 +99,12 @@ contract Hook is BaseHook {
             );
             uint256 amount0 = IERC20(Currency.unwrap(params.key.currency0))
                 .balanceOf(address(this));
-            uint256 shares = (params.amount0 * totalToken0Shares) / amount0;
+            uint256 shares;
+            if (totalToken0Shares == 0) {
+                shares = params.amount0;
+            } else {
+                shares = (params.amount0 * totalToken0Shares) / amount0;
+            }
             token0Shares[msg.sender] += shares;
             totalToken0Shares += shares;
             IERC20(Currency.unwrap(params.key.currency0)).approve(
@@ -120,7 +127,12 @@ contract Hook is BaseHook {
             );
             uint256 amount1 = IERC20(Currency.unwrap(params.key.currency1))
                 .balanceOf(address(this));
-            uint256 shares = (params.amount1 * totalToken1Shares) / amount1;
+            uint256 shares;
+            if (totalToken1Shares == 0) {
+                shares = params.amount1;
+            } else {
+                shares = (params.amount1 * totalToken1Shares) / amount1;
+            }
             token1Shares[msg.sender] += shares;
             totalToken1Shares += shares;
             IERC20(Currency.unwrap(params.key.currency1)).approve(
@@ -232,6 +244,11 @@ contract Hook is BaseHook {
             amount1
         );
 
+        if (tickLower == 0 && tickUpper == 0) {
+            tickLower = MIN_TICK;
+            tickUpper = MAX_TICK;
+        }
+
         // add liquidity to pool
         liquidityAdded = LiquidityAmounts.getLiquidityForAmounts(
             sqrtPriceX96,
@@ -285,15 +302,20 @@ contract Hook is BaseHook {
             hookData
         );
 
-        // Calculate tokens amount
-        (uint256 amount0, uint256 amount1) = LiquidityAmounts
-            .getAmountsForLiquidity(
-                sqrtPriceX96,
-                TickMath.getSqrtPriceAtTick(tickLower),
-                TickMath.getSqrtPriceAtTick(tickUpper),
-                liquidityAdded
-            );
-
+        // // Calculate tokens amount
+        // (uint256 amount0, uint256 amount1) = LiquidityAmounts
+        //     .getAmountsForLiquidity(
+        //         sqrtPriceX96,
+        //         TickMath.getSqrtPriceAtTick(tickLower),
+        //         TickMath.getSqrtPriceAtTick(tickUpper),
+        //         liquidityAdded
+        //     );
+        uint256 amount0 = IERC20(Currency.unwrap(key.currency0)).balanceOf(
+            address(this)
+        );
+        uint256 amount1 = IERC20(Currency.unwrap(key.currency1)).balanceOf(
+            address(this)
+        );
         // approve tokens to lending protocol
         IERC20(Currency.unwrap(key.currency0)).approve(
             address(lendingProtocol),

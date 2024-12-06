@@ -20,7 +20,6 @@ import {BalanceDeltaLibrary, BalanceDelta} from "v4-core/types/BalanceDelta.sol"
 import {IPool} from "../src/interfaces/IPool.sol";
 import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
 
-
 contract MockElAvs {
     address public constant EL_AVS = address(0x1);
 }
@@ -119,14 +118,8 @@ contract TestHook is Test, Deployers {
         MockERC20(Currency.unwrap(currency0)).mint(address(this), 1000 ether);
         MockERC20(Currency.unwrap(currency1)).mint(address(this), 1000 ether);
 
-        MockERC20(Currency.unwrap(currency0)).mint(
-            address(elAvs),
-            1000 ether
-        );
-        MockERC20(Currency.unwrap(currency1)).mint(
-            address(elAvs),
-            1000 ether
-        );
+        MockERC20(Currency.unwrap(currency0)).mint(address(elAvs), 1000 ether);
+        MockERC20(Currency.unwrap(currency1)).mint(address(elAvs), 1000 ether);
         // Initialize a pool
         (key, ) = initPool(
             currency0,
@@ -150,8 +143,10 @@ contract TestHook is Test, Deployers {
             address(modifyLiquidityRouter),
             1000 ether
         );
-        int24 tickLower = TickMath.MIN_TICK / key.tickSpacing * key.tickSpacing;
-        int24 tickUpper = TickMath.MAX_TICK / key.tickSpacing * key.tickSpacing; 
+        int24 tickLower = (TickMath.MIN_TICK / key.tickSpacing) *
+            key.tickSpacing;
+        int24 tickUpper = (TickMath.MAX_TICK / key.tickSpacing) *
+            key.tickSpacing;
         uint128 liquidityDelta = LiquidityAmounts.getLiquidityForAmounts(
             SQRT_PRICE_1_1,
             TickMath.getSqrtPriceAtTick(tickLower),
@@ -159,7 +154,16 @@ contract TestHook is Test, Deployers {
             1 ether,
             1 ether
         );
-        modifyLiquidityRouter.modifyLiquidity(key, IPoolManager.ModifyLiquidityParams({tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: int128(liquidityDelta), salt: bytes32(0)}), ZERO_BYTES);
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            IPoolManager.ModifyLiquidityParams({
+                tickLower: tickLower,
+                tickUpper: tickUpper,
+                liquidityDelta: int128(liquidityDelta),
+                salt: bytes32(0)
+            }),
+            ZERO_BYTES
+        );
         vm.stopPrank();
         MockERC20(Currency.unwrap(currency0)).approve(address(hook), 1 ether);
         MockERC20(Currency.unwrap(currency1)).approve(address(hook), 1 ether);
@@ -196,26 +200,109 @@ contract TestHook is Test, Deployers {
                 .balanceOf(address(hook)),
             1 ether
         );
-        manager.unlock(ZERO_BYTES);
+        manager.unlock(abi.encode(address(elAvs)));
         assertEq(hook.getTickLower(), -60);
         assertEq(hook.getTickUpper(), 60);
     }
 
-    function unlockCallback(bytes calldata rawData) external returns (bytes memory) {
+    function test_BasicSwap() public {
+        address user = address(999);
+        MockERC20(Currency.unwrap(currency0)).mint(user, 1000 ether);
+        MockERC20(Currency.unwrap(currency1)).mint(user, 1000 ether);
+        vm.startPrank(user);
+        MockERC20(Currency.unwrap(currency0)).approve(
+            address(modifyLiquidityRouter),
+            1000 ether
+        );
+        MockERC20(Currency.unwrap(currency1)).approve(
+            address(modifyLiquidityRouter),
+            1000 ether
+        );
+        int24 tickLower = (TickMath.MIN_TICK / key.tickSpacing) *
+            key.tickSpacing;
+        int24 tickUpper = (TickMath.MAX_TICK / key.tickSpacing) *
+            key.tickSpacing;
+        uint128 liquidityDelta = LiquidityAmounts.getLiquidityForAmounts(
+            SQRT_PRICE_1_1,
+            TickMath.getSqrtPriceAtTick(tickLower),
+            TickMath.getSqrtPriceAtTick(tickUpper),
+            1 ether,
+            1 ether
+        );
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            IPoolManager.ModifyLiquidityParams({
+                tickLower: tickLower,
+                tickUpper: tickUpper,
+                liquidityDelta: int128(liquidityDelta),
+                salt: bytes32(0)
+            }),
+            ZERO_BYTES
+        );
+
+        MockERC20(Currency.unwrap(currency0)).approve(address(hook), 1 ether);
+        MockERC20(Currency.unwrap(currency1)).approve(address(hook), 1 ether);
+        hook.addLiquidity(
+            Hook.LiquidityParams({
+                fee: 60,
+                currency0: currency0,
+                currency1: currency1,
+                amount0: 1 ether,
+                amount1: 1 ether,
+                key: key
+            })
+        );
+
+        assertEq(
+            ERC20(Currency.unwrap(currency0)).balanceOf(
+                address(lendingProtocol)
+            ),
+            1 ether
+        );
+        assertEq(
+            ERC20(Currency.unwrap(currency1)).balanceOf(
+                address(lendingProtocol)
+            ),
+            1 ether
+        );
+        assertEq(
+            MockERC20(lendingProtocol.aTokens(Currency.unwrap(currency0)))
+                .balanceOf(address(hook)),
+            1 ether
+        );
+        assertEq(
+            MockERC20(lendingProtocol.aTokens(Currency.unwrap(currency1)))
+                .balanceOf(address(hook)),
+            1 ether
+        );
+        vm.stopPrank();
+        manager.unlock(abi.encode(address(user)));
+    }
+
+    function unlockCallback(
+        bytes calldata rawData
+    ) external returns (bytes memory) {
+        address actor = abi.decode(rawData, (address));
         IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
             zeroForOne: true,
             amountSpecified: -0.00001 ether,
             sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
         });
-        vm.startPrank(address(elAvs));
-        BalanceDelta delta = manager.swap(
-            key,
-            params,
-            abi.encode(int24(-60), int24(60))
-        );
+        vm.startPrank(actor);
+        bytes memory tickParams = actor == address(elAvs)
+            ? abi.encode(int24(-60), int24(60))
+            : ZERO_BYTES;
+        BalanceDelta delta = manager.swap(key, params, tickParams);
         manager.sync(currency0);
-        MockERC20(Currency.unwrap(currency0)).transfer(address(manager), 0.00001 ether);
-        manager.take(currency1, address(elAvs), uint256(int256(delta.amount1())));
+        MockERC20(Currency.unwrap(currency0)).transfer(
+            address(manager),
+            0.00001 ether
+        );
+        manager.take(
+            currency1,
+            address(actor),
+            uint256(int256(delta.amount1()))
+        );
         manager.settle();
         vm.stopPrank();
     }
