@@ -21,11 +21,13 @@ import {SqrtPriceMath} from "v4-core/libraries/SqrtPriceMath.sol";
 import {FullMath} from "v4-core/libraries/FullMath.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {IPool} from "./interfaces/IPool.sol";
+import {CurrencySettler} from "v4-periphery/lib/v4-core/test/utils/CurrencySettler.sol";
 
 contract Hook is BaseHook {
     using CurrencyLibrary for Currency;
     using BalanceDeltaLibrary for BalanceDelta;
     using StateLibrary for IPoolManager;
+    using CurrencySettler for Currency;
 
     struct LiquidityParams {
         uint24 fee;
@@ -202,8 +204,7 @@ contract Hook is BaseHook {
         onlyPoolManager
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        PoolId poolId = key.toId();
-        (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(poolId);
+        (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(key.toId());
         if (sqrtPriceX96 == 0) revert PoolNotInitialized();
 
         if (sender == EL_AVS) {
@@ -215,16 +216,20 @@ contract Hook is BaseHook {
             );
         }
         // Withdraw from lending protocol
-        address aToken0 = getATokenAddress(Currency.unwrap(key.currency0));
+
         lendingProtocol.withdraw(
             Currency.unwrap(key.currency0),
-            IERC20(aToken0).balanceOf(address(this)),
+            IERC20(getATokenAddress(Currency.unwrap(key.currency0))).balanceOf(
+                address(this)
+            ),
             address(this)
         );
-        address aToken1 = getATokenAddress(Currency.unwrap(key.currency1));
+
         lendingProtocol.withdraw(
             Currency.unwrap(key.currency1),
-            IERC20(aToken1).balanceOf(address(this)),
+            IERC20(getATokenAddress(Currency.unwrap(key.currency1))).balanceOf(
+                address(this)
+            ),
             address(this)
         );
 
@@ -258,7 +263,7 @@ contract Hook is BaseHook {
             amount1
         );
 
-        poolManager.modifyLiquidity(
+        (BalanceDelta delta, ) = poolManager.modifyLiquidity(
             key,
             IPoolManager.ModifyLiquidityParams({
                 tickLower: tickLower,
@@ -267,6 +272,19 @@ contract Hook is BaseHook {
                 salt: bytes32(0)
             }),
             hookData
+        );
+
+        key.currency0.settle(
+            poolManager,
+            address(this),
+            uint256(int256(-delta.amount0())),
+            false
+        );
+        key.currency1.settle(
+            poolManager,
+            address(this),
+            uint256(int256(-delta.amount1())),
+            false
         );
 
         return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
@@ -279,10 +297,7 @@ contract Hook is BaseHook {
         BalanceDelta,
         bytes calldata hookData
     ) external override onlyPoolManager returns (bytes4, int128) {
-        PoolId poolId = key.toId();
-        (uint160 sqrtPriceX96, int24 currentTick, , ) = poolManager.getSlot0(
-            poolId
-        );
+        (, int24 currentTick, , ) = poolManager.getSlot0(key.toId());
 
         if (sender == EL_AVS) {
             if (currentTick < tickLower || currentTick > tickUpper)
@@ -291,7 +306,7 @@ contract Hook is BaseHook {
         }
 
         // Remove Liquidity
-        poolManager.modifyLiquidity(
+        (BalanceDelta delta, ) = poolManager.modifyLiquidity(
             key,
             IPoolManager.ModifyLiquidityParams({
                 tickLower: tickLower,
@@ -302,14 +317,6 @@ contract Hook is BaseHook {
             hookData
         );
 
-        // // Calculate tokens amount
-        // (uint256 amount0, uint256 amount1) = LiquidityAmounts
-        //     .getAmountsForLiquidity(
-        //         sqrtPriceX96,
-        //         TickMath.getSqrtPriceAtTick(tickLower),
-        //         TickMath.getSqrtPriceAtTick(tickUpper),
-        //         liquidityAdded
-        //     );
         uint256 amount0 = IERC20(Currency.unwrap(key.currency0)).balanceOf(
             address(this)
         );
@@ -339,7 +346,22 @@ contract Hook is BaseHook {
             address(this),
             0
         );
-
+        if (delta.amount0() > 0) {
+            key.currency0.take(
+                poolManager,
+                address(this),
+                uint256(int256(delta.amount0())),
+                false
+            );
+        }
+        if (delta.amount1() > 0) {
+            key.currency1.take(
+                poolManager,
+                address(this),
+                uint256(int256(delta.amount1())),
+                false
+            );
+        }
         return (this.afterSwap.selector, 0);
     }
 
