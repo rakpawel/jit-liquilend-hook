@@ -128,13 +128,10 @@ contract TestHook is Test, Deployers {
             3000, // Set the `DYNAMIC_FEE_FLAG` in place of specifying a fixed fee
             SQRT_PRICE_1_1
         );
-    }
 
-    function test_addLiquidityAndSwap() public {
-        address user = address(999);
-        MockERC20(Currency.unwrap(currency0)).mint(user, 1000 ether);
-        MockERC20(Currency.unwrap(currency1)).mint(user, 1000 ether);
-        vm.startPrank(user);
+        // initialize initial small-liquidity
+        MockERC20(Currency.unwrap(currency0)).mint(msg.sender, 1000 ether);
+        MockERC20(Currency.unwrap(currency1)).mint(msg.sender, 1000 ether);
         MockERC20(Currency.unwrap(currency0)).approve(
             address(modifyLiquidityRouter),
             1000 ether
@@ -164,16 +161,22 @@ contract TestHook is Test, Deployers {
             }),
             ZERO_BYTES
         );
-        vm.stopPrank();
-        MockERC20(Currency.unwrap(currency0)).approve(address(hook), 1 ether);
-        MockERC20(Currency.unwrap(currency1)).approve(address(hook), 1 ether);
+    }
+
+    function test_addLiquidity() public {
+        address user = address(999);
+        vm.startPrank(user);
+        MockERC20(Currency.unwrap(currency0)).mint(user, 1000 ether);
+        MockERC20(Currency.unwrap(currency1)).mint(user, 1000 ether);
+        MockERC20(Currency.unwrap(currency0)).approve(address(hook), 100 ether);
+        MockERC20(Currency.unwrap(currency1)).approve(address(hook), 100 ether);
         hook.addLiquidity(
             Hook.LiquidityParams({
                 fee: 60,
                 currency0: currency0,
                 currency1: currency1,
-                amount0: 1 ether,
-                amount1: 1 ether,
+                amount0: 100 ether,
+                amount1: 100 ether,
                 key: key
             })
         );
@@ -182,101 +185,46 @@ contract TestHook is Test, Deployers {
             ERC20(Currency.unwrap(currency0)).balanceOf(
                 address(lendingProtocol)
             ),
-            1 ether
+            100 ether
         );
         assertEq(
             ERC20(Currency.unwrap(currency1)).balanceOf(
                 address(lendingProtocol)
             ),
-            1 ether
+            100 ether
         );
         assertEq(
             MockERC20(lendingProtocol.aTokens(Currency.unwrap(currency0)))
                 .balanceOf(address(hook)),
-            1 ether
+            100 ether
         );
         assertEq(
             MockERC20(lendingProtocol.aTokens(Currency.unwrap(currency1)))
                 .balanceOf(address(hook)),
-            1 ether
+            100 ether
         );
+        vm.stopPrank();
+    }
+
+    function test_AVSSwap() public {
+        test_addLiquidity();
         manager.unlock(abi.encode(address(elAvs)));
         assertEq(hook.getTickLower(), -60);
         assertEq(hook.getTickUpper(), 60);
     }
 
-    function test_BasicSwap() public {
-        address user = address(999);
-        MockERC20(Currency.unwrap(currency0)).mint(user, 1000 ether);
-        MockERC20(Currency.unwrap(currency1)).mint(user, 1000 ether);
-        vm.startPrank(user);
-        MockERC20(Currency.unwrap(currency0)).approve(
-            address(modifyLiquidityRouter),
-            1000 ether
-        );
-        MockERC20(Currency.unwrap(currency1)).approve(
-            address(modifyLiquidityRouter),
-            1000 ether
-        );
-        int24 tickLower = (TickMath.MIN_TICK / key.tickSpacing) *
-            key.tickSpacing;
-        int24 tickUpper = (TickMath.MAX_TICK / key.tickSpacing) *
-            key.tickSpacing;
-        uint128 liquidityDelta = LiquidityAmounts.getLiquidityForAmounts(
-            SQRT_PRICE_1_1,
-            TickMath.getSqrtPriceAtTick(tickLower),
-            TickMath.getSqrtPriceAtTick(tickUpper),
-            1 ether,
-            1 ether
-        );
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            IPoolManager.ModifyLiquidityParams({
-                tickLower: tickLower,
-                tickUpper: tickUpper,
-                liquidityDelta: int128(liquidityDelta),
-                salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
+    function test_UserSwap1() public {
+        test_addLiquidity();
+        manager.unlock(abi.encode(address(1234)));
+        assertEq(hook.getTickLower(), TickMath.MIN_TICK / 60 * 60);
+        assertEq(hook.getTickUpper(), TickMath.MAX_TICK / 60 * 60);
+    }
 
-        MockERC20(Currency.unwrap(currency0)).approve(address(hook), 1 ether);
-        MockERC20(Currency.unwrap(currency1)).approve(address(hook), 1 ether);
-        hook.addLiquidity(
-            Hook.LiquidityParams({
-                fee: 60,
-                currency0: currency0,
-                currency1: currency1,
-                amount0: 1 ether,
-                amount1: 1 ether,
-                key: key
-            })
-        );
-
-        assertEq(
-            ERC20(Currency.unwrap(currency0)).balanceOf(
-                address(lendingProtocol)
-            ),
-            1 ether
-        );
-        assertEq(
-            ERC20(Currency.unwrap(currency1)).balanceOf(
-                address(lendingProtocol)
-            ),
-            1 ether
-        );
-        assertEq(
-            MockERC20(lendingProtocol.aTokens(Currency.unwrap(currency0)))
-                .balanceOf(address(hook)),
-            1 ether
-        );
-        assertEq(
-            MockERC20(lendingProtocol.aTokens(Currency.unwrap(currency1)))
-                .balanceOf(address(hook)),
-            1 ether
-        );
-        vm.stopPrank();
-        manager.unlock(abi.encode(address(user)));
+    function test_UserSwap2() public {
+        test_AVSSwap();
+        manager.unlock(abi.encode(address(1234)));
+        assertEq(hook.getTickLower(), -60);
+        assertEq(hook.getTickUpper(), 60);
     }
 
     function unlockCallback(
@@ -296,6 +244,10 @@ contract TestHook is Test, Deployers {
         BalanceDelta delta = manager.swap(key, params, tickParams);
         manager.sync(currency0);
         uint256 swapAmount0 = actor == address(elAvs) ? 0.00001 ether : 1 ether;
+        MockERC20(Currency.unwrap(currency0)).mint(
+            actor,
+            swapAmount0
+        );
         MockERC20(Currency.unwrap(currency0)).transfer(
             address(manager),
             swapAmount0
